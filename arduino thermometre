@@ -1,0 +1,212 @@
+#include<SPI.h>
+#include<LoRa.h>
+#include<ArduinoJson.h>
+//#include<avr/interrupt.h>
+//#include<avr/io.h>
+String id = "asdef";
+
+//constStringtype="Switch";//DeviceID
+String type = "Thermometre" ; //DeviceID
+long frequency = 915E6; //LoRaFrequency
+bool shouldPublishStatus = false;
+StaticJsonDocument<150>pingJsonRequest;
+StaticJsonDocument<100>loraResponse;
+StaticJsonDocument<100>loraResponsedoc;
+JsonObject pingData = pingJsonRequest.createNestedObject("DeviceConnectivity");
+
+StaticJsonDocument<200>getValueJsonRequest;
+JsonObject getObject = getValueJsonRequest.createNestedObject("GetValue");
+
+
+void setup() {
+  Serial.begin(9600);
+  while (!Serial);
+  int csPin = 10; //LoRaradiochipselect
+  int resetPin = 9; //LoRaradioreset
+  int irqPin = 2; //changeforyourboard;mustbeahardwareinter
+
+  LoRa.setPins(csPin, resetPin, irqPin);
+  pinMode(7, OUTPUT);
+
+  if (!LoRa.begin(frequency)) {
+
+    Serial.println("LoRainitfailed.Checkyourconnections.");
+    while (true); //iffailed,donothing
+
+  }
+  Serial.println("LoRainitsucceeded.");
+  LoRa.onReceive(onReceive);
+  LoRa_rxMode();
+  LoRa.setSpreadingFactor(7);
+  LoRa.enableCrc();
+  LoRa.setCodingRate4(8);
+  LoRa.setSignalBandwidth(125E3);
+
+  pingData["id"] = id;
+  pingData["isPairing"] = false;
+  pingData["type"] = type;
+  pingData["objectType"] = "Pairing";
+  pingJsonRequest.add(pingData);
+
+}
+
+void loop() {
+  if ((runEvery(3000))) {
+ // getValueJsonRequest.clear();
+ // getObject.clear();
+    getObject["id"] = id;
+    getObject["value"] = String(random(0, 30));
+    getValueJsonRequest.add(getObject);
+    serializeJson(getValueJsonRequest,Serial);
+    Serial.println();
+    LoRa_sendMessage(getValueJsonRequest.as<String>());
+
+  }
+  if (shouldPublishStatus == true) {
+    LoRa_sendMessage(("PONG" + id));
+    Serial.println(("PONG" + id));
+
+  }
+
+
+  delay(1000);
+
+
+
+}
+
+void serialEvent() {
+  while (Serial.available()) {
+    String serialMessage = (String)Serial.readString();
+    if (serialMessage.indexOf("Pair") >= 0) { //ContainsPair
+      pingData["isPairing"] = true;
+      Serial.println("isPairingNow");
+      Serial.println(pingJsonRequest.as<String>());
+      LoRa_sendMessage(pingJsonRequest.as<String>());
+
+    }
+
+  }
+}
+void LoRa_rxMode() {
+  //LoRa.enableInvertIQ();//activeinvertIandQsignals
+  LoRa.receive();//setreceivemode
+
+}
+
+void LoRa_txMode() {
+  LoRa.idle();//setstandbymode
+  //LoRa.disableInvertIQ();//normalmode
+
+}
+
+void LoRa_sendMessage(String message) {
+  LoRa_txMode();//settxmode
+  LoRa.beginPacket();//startpacket
+  LoRa.print(message);//addpayload
+  LoRa.endPacket();//finishpacketandsendit
+  LoRa_rxMode();//setrxmode
+
+}
+
+void onReceive(int packetSize) {
+  String message = "";
+
+  while (LoRa.available()) {
+    message += (char)LoRa.read();
+
+  }
+
+  Serial.println("NodeReceive:");
+  Serial.println(message);
+
+  if (message.startsWith("PING")) {
+    message.remove(0, strlen("PING"));
+    if (message == id) {
+      shouldPublishStatus = true;
+      Serial.println(("PING" + id));
+      return;
+
+    }
+    shouldPublishStatus = false;
+    return;
+
+
+  } else if (message == "Stop") {
+
+    Serial.println("Stop");
+    shouldPublishStatus = false;
+    return;
+
+  }
+
+
+  message.replace("\\", "");
+
+
+  DeserializationError error = deserializeJson(loraResponse, message.c_str());
+
+  if (error) {
+
+    Serial.println("errorparsinsJSON");
+    Serial.println(error.c_str());
+    return;
+
+  }
+  Serial.println("pareseloraresponse");
+
+  String setvalue = loraResponse["SetValue"];
+  Serial.println(setvalue);
+
+
+  //don&#39;tdelete
+  //preventingerrorsfromemptyvalues
+  setvalue.replace(":,", ":\"\",");
+  //setvalue.replace(":\"",":\"\",");
+  setvalue.replace(":}", ":\"\")");
+  //
+  Serial.println(setvalue);
+
+  error = deserializeJson(loraResponsedoc, setvalue);
+  if (error)
+  {
+    Serial.println("eeorparsingJson;");
+    Serial.println(error.c_str());
+    return;
+
+  }
+  Serial.println(loraResponsedoc["id"].as<String>());
+
+  String loraValue = (loraResponsedoc["value"].as<String>());
+  loraValue.toUpperCase();
+  String idLora = loraResponsedoc["id"].as<String>();
+  if (idLora == id) {
+
+    Serial.println("HELLLO");
+    Serial.println(type);
+    if (loraValue == "LOW") {
+
+      digitalWrite(7, LOW);
+
+    } else {
+
+      digitalWrite(7, HIGH);
+
+
+    }
+
+  }
+}
+boolean runEvery(unsigned long interval)
+{
+  static unsigned long previousMillis = 0;
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= interval)
+  {
+
+    previousMillis = currentMillis;
+    return true;
+
+  }
+  return false;
+}
